@@ -13,13 +13,15 @@ class allocator_sorted_list final:
     public allocator_with_fit_mode
 {
 
+
 private:
     
     void *_trusted_memory;
 
-    static constexpr const size_t allocator_metadata_size = sizeof(std::pmr::memory_resource *) + sizeof(fit_mode) + sizeof(size_t) + sizeof(std::mutex) + sizeof(void*);
+    static constexpr const size_t allocator_metadata_size = sizeof(std::pmr::memory_resource *) + sizeof(fit_mode) // первый - указ на parent аллокатор
+    + sizeof(size_t) + sizeof(std::mutex) + sizeof(void*);
 
-    static constexpr const size_t block_metadata_size = sizeof(void*) + sizeof(size_t);
+    static constexpr const size_t block_metadata_size = sizeof(void*) + sizeof(size_t); // указатель на следующий свободный + размер чего_то?
 
 public:
 
@@ -56,12 +58,20 @@ private:
         allocator_with_fit_mode::fit_mode mode) override;
 
     std::vector<allocator_test_utils::block_info> get_blocks_info() const noexcept override;
+    std::pmr::memory_resource*& get_parent();
+    std::mutex& get_mutex() const;
+    allocator_with_fit_mode::fit_mode& get_fit_mode();
+    size_t * get_size_total();
+    void * get_first_free_block();
+    void insert_free_block(void * block);
+    std::byte * allocate_and_merge(std::byte * ptr_prev, std::byte * ptr_cur, size_t size); 
+
 
 private:
 
     std::vector<allocator_test_utils::block_info> get_blocks_info_inner() const override;
 
-    class sorted_free_iterator
+    class sorted_free_iterator // проходит по свобоным блокам??
     {
         void* _free_ptr;
 
@@ -81,7 +91,7 @@ private:
 
         sorted_free_iterator operator++(int n);
 
-        size_t size() const noexcept;
+        size_t size() const noexcept;     
 
         void* operator*() const noexcept;
 
@@ -90,7 +100,7 @@ private:
         sorted_free_iterator(void* trusted);
     };
 
-    class sorted_iterator
+    class sorted_iterator // проходит по всем блокам?
     {
         void* _free_ptr;
         void* _current_ptr;
@@ -116,7 +126,7 @@ private:
 
         void* operator*() const noexcept;
 
-        bool occupied()const noexcept;
+        bool occupied() const noexcept;
 
         sorted_iterator();
 
@@ -133,4 +143,4 @@ private:
     sorted_iterator end() const noexcept;
 };
 
-#endif //MATH_PRACTICE_AND_OPERATING_SYSTEMS_ALLOCATOR_ALLOCATOR_SORTED_LIST_H
+#endif //MATH_PRACTICE_AND_OPERATING_SYSTEMS_ALLOCATOR_ALLOCATOR_SORTED_LIST_
