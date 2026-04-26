@@ -32,9 +32,9 @@ allocator_sorted_list &allocator_sorted_list::operator=(
     return *this;
 }
 
-size_t * get_block_size(void * block) {
+size_t get_block_size(void * block) {
     auto * ptr = reinterpret_cast<std::byte*>(block);
-    return reinterpret_cast<size_t*>(ptr + sizeof(void*));
+    return *reinterpret_cast<size_t*>(ptr + sizeof(void*));
 }
 
 allocator_sorted_list::allocator_sorted_list(
@@ -45,15 +45,15 @@ allocator_sorted_list::allocator_sorted_list(
     if (parent_allocator == nullptr) {
         parent_allocator = std::pmr::get_default_resource();
     }
-    _trusted_memory = parent_allocator->allocate(space_size + allocator_metadata_size);
+    _trusted_memory = parent_allocator->allocate(space_size + allocator_metadata_size + block_metadata_size);
     auto * ptr = reinterpret_cast<std::byte*>(_trusted_memory);
 
     *reinterpret_cast<std::pmr::memory_resource**>(ptr) = parent_allocator;
     ptr += sizeof(parent_allocator);
     *reinterpret_cast<allocator_with_fit_mode::fit_mode*>(ptr) = allocate_fit_mode;
-    ptr += sizeof(allocate_fit_mode);
+    ptr += sizeof(fit_mode);
     *reinterpret_cast<size_t*>(ptr) = space_size + allocator_metadata_size;
-    ptr += sizeof(space_size);
+    ptr += sizeof(size_t);
 
     new (ptr) std::mutex; // placement new
     ptr += sizeof(std::mutex);
@@ -69,22 +69,23 @@ allocator_sorted_list::allocator_sorted_list(
 [[nodiscard]] void *allocator_sorted_list::do_allocate_sm(
     size_t size)
 {
-    if (size <= 0) {
-        throw std::bad_alloc();
+    if (size == 0) {
+        return nullptr;
     }
     std::lock_guard<std::mutex> lock(get_mutex()); 
     std::byte * ptr_cur = reinterpret_cast<std::byte*>(get_first_free_block()); // проверяемый блок
     std::byte * ptr_prev = nullptr; // предыдущий блок
     size_t worst_size = 0;
     size_t best_size = std::numeric_limits<size_t>::max();
+
     std::byte * first_fit_place = nullptr; std::byte * prev_first_fit = nullptr;
     std::byte * best_fit_place = nullptr; std::byte * prev_best_fit = nullptr;
     std::byte * worst_fit_place = nullptr; std::byte * prev_worst_fit = nullptr;
     std::byte * allocated_block = nullptr;
 
     while (ptr_cur != nullptr) {
-        size_t size_block = *get_block_size(ptr_cur);
-        std::byte ** next_free_block = reinterpret_cast<std::byte**>(ptr_cur);
+        size_t size_block = get_block_size(ptr_cur);
+        std::byte * next_free_block = read_next_block(ptr_cur); // next FREE block!
 
         if (get_fit_mode() == allocator_with_fit_mode::fit_mode::first_fit) {
             if (size_block - block_metadata_size >= size) {
@@ -109,7 +110,7 @@ allocator_sorted_list::allocator_sorted_list(
         }
 
         ptr_prev = ptr_cur;
-        ptr_cur = reinterpret_cast<std::byte*>(*reinterpret_cast<void**>(ptr_cur));
+        ptr_cur = read_next_block(ptr_cur);
         // идем на след блок
     }
     if (get_fit_mode() == allocator_with_fit_mode::fit_mode::first_fit) {
@@ -134,37 +135,33 @@ allocator_sorted_list::allocator_sorted_list(
     return reinterpret_cast<void*>(allocated_block + block_metadata_size);
 }
 
-std::byte * allocator_sorted_list::allocate_and_merge(std::byte * ptr_prev, std::byte * ptr_cur, size_t size) { 
-    std::cout << "SUKA2" << std::endl;
-    std::byte * allocated_block = ptr_cur;
-    size_t size_block = *get_block_size(ptr_cur);
-    std::byte ** next_free_block = reinterpret_cast<std::byte**>(ptr_cur);
 
-    if (size_block - size > block_metadata_size) { // нужен новый блок
-        // заполняем мета для нового блока и вставляем в список свободных
-        if (ptr_prev == nullptr) {
-            size_t offset = sizeof(std::pmr::memory_resource *) + sizeof(fit_mode) + sizeof(size_t) + sizeof(std::mutex);
-            *reinterpret_cast<void**>((std::byte*)_trusted_memory + offset) = *next_free_block;
-        } else {
-            *reinterpret_cast<void**>(ptr_prev) = *next_free_block;
-        }
-        std::byte * new_block = ptr_cur + block_metadata_size + size;
-        *reinterpret_cast<void**>(new_block) = *next_free_block;
+std::byte * allocator_sorted_list::allocate_and_merge(std::byte * ptr_prev, std::byte * ptr_cur, size_t size) { 
+    
+    std::byte * allocated_block = ptr_cur;
+    size_t size_block = get_block_size(ptr_cur);
+    std::byte * next_free_block = read_next_block(ptr_cur);
+
+    if (size_block - block_metadata_size - size > block_metadata_size + 1) { // можно отрезать лишний кусок и вставить в список свободных
+        std::byte * new_block = ptr_cur + block_metadata_size + size; // на этом месте надо заполнить мета (это новый свободный)
+        *reinterpret_cast<void**>(new_block) = next_free_block;
         *reinterpret_cast<size_t*>(new_block + sizeof(void*)) = size_block - size - block_metadata_size;
-        insert_free_block(new_block);
         *reinterpret_cast<size_t*>(ptr_cur + sizeof(void*)) = size + block_metadata_size;
-        return allocated_block;
+
+        if (ptr_prev == nullptr) { // мы в первом блоке
+            set_new_first_free_block(new_block);
+        } else {
+            *reinterpret_cast<void**>(ptr_prev) = new_block;
+        }
 
     } else {
         if (ptr_prev == nullptr) {
-            size_t offset = sizeof(std::pmr::memory_resource *) + sizeof(fit_mode) + sizeof(size_t) + sizeof(std::mutex);
-            *reinterpret_cast<void**>((std::byte*)_trusted_memory + offset) = *next_free_block;
-
+            set_new_first_free_block(next_free_block);
         } else {
-            *reinterpret_cast<void**>(ptr_prev) = *next_free_block;
+            *reinterpret_cast<void**>(ptr_prev) = next_free_block;
         }
-        return allocated_block;
     }
+    return allocated_block;
 }
 
 allocator_sorted_list::allocator_sorted_list(const allocator_sorted_list &other) {}
@@ -184,23 +181,20 @@ void allocator_sorted_list::do_deallocate_sm(
     }
     std::byte * mem_start = reinterpret_cast<std::byte*>(_trusted_memory) + allocator_metadata_size;
     std::byte * mem_end = reinterpret_cast<std::byte*>(_trusted_memory) + *get_size_total();
-    std::cout << "SUKA" << std::endl;
     std::lock_guard<std::mutex> lock(get_mutex());
     std::byte * block = reinterpret_cast<std::byte*>(static_cast<std::byte*>(at) - block_metadata_size);
+
     if (block < mem_start || block >= mem_end) {
         throw std::bad_alloc();
     }
     insert_free_block(block);
-    std::cout << "inserted" << std::endl;
-    size_t size = *get_block_size(block);
-    std::cout << size << std::endl;
+    size_t size = get_block_size(block);
     std::byte * next_block = block + size;
     std::byte * next_free_block = *reinterpret_cast<std::byte**>(block);
     if (next_block == next_free_block) {
-        size_t size_next = *get_block_size(next_block);
+        size_t size_next = get_block_size(next_block);
         *reinterpret_cast<void**>(block) = *reinterpret_cast<void**>(next_block);
         *reinterpret_cast<size_t*>(block + sizeof(void*)) = size + size_next;
-        std::cout << "merged next" << std::endl;
     }
     std::byte * curr = reinterpret_cast<std::byte*>(get_first_free_block());
     std::byte * prev = nullptr;
@@ -209,14 +203,14 @@ void allocator_sorted_list::do_deallocate_sm(
         curr = static_cast<std::byte*>(*reinterpret_cast<void**>(curr));    
     } 
     if (prev != nullptr) {
-        size_t size_prev = *get_block_size(prev);
+        size_t size_prev = get_block_size(prev);
         if (prev + size_prev + block_metadata_size == block) {
             *reinterpret_cast<void**>(prev) = *reinterpret_cast<void**>(block); 
             *reinterpret_cast<size_t*>(prev + sizeof(void*)) = size_prev + *reinterpret_cast<size_t*>(block + sizeof(void*));
-            std::cout << "merged prev" << std::endl;
         }
     }
 }
+
 
 inline void allocator_sorted_list::set_fit_mode(
     allocator_with_fit_mode::fit_mode mode)
@@ -234,12 +228,11 @@ std::vector<allocator_test_utils::block_info> allocator_sorted_list::get_blocks_
 
 std::vector<allocator_test_utils::block_info> allocator_sorted_list::get_blocks_info_inner() const
 {
-    // std::vector<allocator_test_utils::block_info> info_vector;
-    // for (auto it = begin(); it != end(), ++it) {
-    //     info_vector.push_back(it.size(), it.occupied());
-    // }
-    // return info_vector;
-    return {};
+    std::vector<allocator_test_utils::block_info> info_vector;
+    for (auto it = begin(); it != end(); ++it) {
+        info_vector.push_back({it.size(), it.occupied()});
+    }
+    return info_vector;
 }
 
 allocator_sorted_list::sorted_free_iterator allocator_sorted_list::free_begin() const noexcept
@@ -289,7 +282,7 @@ allocator_sorted_list::sorted_free_iterator allocator_sorted_list::sorted_free_i
 
 size_t allocator_sorted_list::sorted_free_iterator::size() const noexcept
 {
-    return *get_block_size(_free_ptr);
+    return get_block_size(_free_ptr);
 }
 
 void *allocator_sorted_list::sorted_free_iterator::operator*() const noexcept
@@ -317,7 +310,7 @@ bool allocator_sorted_list::sorted_iterator::operator!=(const allocator_sorted_l
 
 allocator_sorted_list::sorted_iterator &allocator_sorted_list::sorted_iterator::operator++() & noexcept
 {
-    int offset = *get_block_size(this->_current_ptr);
+    int offset = get_block_size(this->_current_ptr);
     this->_current_ptr = static_cast<std::byte*>(this->_current_ptr) + offset;
     return *this;
 }
@@ -331,7 +324,7 @@ allocator_sorted_list::sorted_iterator allocator_sorted_list::sorted_iterator::o
 
 size_t allocator_sorted_list::sorted_iterator::size() const noexcept
 {
-    return *get_block_size(_current_ptr);
+    return get_block_size(_current_ptr);
 }
 
 void *allocator_sorted_list::sorted_iterator::operator*() const noexcept
@@ -386,6 +379,17 @@ void * allocator_sorted_list::get_first_free_block() {
     return *reinterpret_cast<void**>(ptr + allocator_metadata_size - sizeof(void*));
 }
 
+std::byte* allocator_sorted_list::read_next_block(void *block) {
+    return reinterpret_cast<std::byte*>((*reinterpret_cast<void**>(block)));
+}
+
+void allocator_sorted_list::set_new_first_free_block(void * block) {
+    auto *ptr = reinterpret_cast<std::byte *>(_trusted_memory) +
+                sizeof(std::pmr::memory_resource *) + sizeof(fit_mode) +
+                sizeof(size_t) + sizeof(std::mutex);
+    *reinterpret_cast<void **>(ptr) = block;
+}
+
 void allocator_sorted_list::insert_free_block(void * block) {
     std::byte* byte_block = reinterpret_cast<std::byte*>(block); 
     std::byte * curr = reinterpret_cast<std::byte*>(get_first_free_block());
@@ -393,14 +397,14 @@ void allocator_sorted_list::insert_free_block(void * block) {
 
     while (curr != nullptr && curr < byte_block) {
         prev = curr;
-        curr = reinterpret_cast<std::byte*>(*reinterpret_cast<void**>(curr));
+        curr = read_next_block(curr);
     }
 
     *reinterpret_cast<std::byte**>(byte_block) = curr;
     if (prev == nullptr) {
-        size_t offset = sizeof(std::pmr::memory_resource *) + sizeof(fit_mode) + sizeof(size_t) + sizeof(std::mutex);
-        *reinterpret_cast<void**>((std::byte*)_trusted_memory + offset) = byte_block;
+        set_new_first_free_block(byte_block);
     } else {
         *reinterpret_cast<void**>(prev) = byte_block; 
     }
 }
+

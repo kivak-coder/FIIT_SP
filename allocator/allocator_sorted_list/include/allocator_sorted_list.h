@@ -65,7 +65,8 @@ private:
     void * get_first_free_block();
     void insert_free_block(void * block);
     std::byte * allocate_and_merge(std::byte * ptr_prev, std::byte * ptr_cur, size_t size); 
-
+    std::byte* read_next_block(void *block);
+    void set_new_first_free_block(void *block);
 
 private:
 
