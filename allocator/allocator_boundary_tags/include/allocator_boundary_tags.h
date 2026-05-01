@@ -16,9 +16,11 @@ class allocator_boundary_tags final :
 private:
 
     static constexpr const size_t allocator_metadata_size = sizeof(memory_resource*) + sizeof(allocator_with_fit_mode::fit_mode) +
-                                                            sizeof(size_t) + sizeof(std::mutex) + sizeof(void*);
+                                                            sizeof(size_t) + sizeof(std::mutex) + sizeof(void*); // указатель на первый ЗАНЯТЫЙ
 
     static constexpr const size_t occupied_block_metadata_size = sizeof(size_t) + sizeof(void*) + sizeof(void*) + sizeof(void*);
+
+    // [void* back | void* forward | size_t size | void* parent_mem]
 
     static constexpr const size_t free_block_metadata_size = 0;
 
@@ -54,6 +56,17 @@ private:
         void *at) override;
 
     bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override;
+    std::pmr::memory_resource*& get_parent() const;
+    std::mutex& get_mutex() const;
+    allocator_with_fit_mode::fit_mode& get_fit_mode() const;
+    void * get_first_occupied_block() const;
+    size_t get_size_total() const;
+    static void * get_next_occupied_block(void * block);
+    void * get_prev_occupied_block(void * block) const;
+    static bool next_is_free(void * block);
+    static void * get_next_free_block(void * block);
+    void * end_of_memory() const;
+    std::byte * allocate_and_fill_meta(std::byte * ptr_prev, std::byte * ptr_cur, size_t size);
 
 public:
     
@@ -70,9 +83,9 @@ private:
 
 /** TODO: Highly recommended for helper functions to return references */
 
-    class boundary_iterator
+    class boundary_iterator 
     {
-        void* _occupied_ptr;
+        void* _occupied_ptr; // указатель на блок
         bool _occupied;
         void* _trusted_memory;
 
@@ -116,4 +129,4 @@ private:
     boundary_iterator end() const noexcept;
 };
 
-#endif //MATH_PRACTICE_AND_OPERATING_SYSTEMS_ALLOCATOR_ALLOCATOR_BOUNDARY_TAGS_H
+#endif //MATH_PRACTICE_AND_OPERATING_SYSTEMS_ALLOCATOR_ALLOCATOR_BOUNDARY_TAGS_
