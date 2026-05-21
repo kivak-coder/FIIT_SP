@@ -67,7 +67,9 @@ private:
     static void * get_next_free_block(void * block);
     void * end_of_memory() const;
     std::byte * allocate_and_fill_meta(std::byte * ptr_prev, std::byte * ptr_cur, size_t size);
-
+    void * get_first_free() const noexcept;
+    void set_first_free(void *ptr) noexcept;
+    void dump_blocks() const;
 public:
     
     inline void set_fit_mode(
