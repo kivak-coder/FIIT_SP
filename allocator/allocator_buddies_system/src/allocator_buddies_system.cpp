@@ -4,7 +4,6 @@
 
 allocator_buddies_system::~allocator_buddies_system()
 {
-    throw not_implemented("allocator_buddies_system::~allocator_buddies_system()", "your code should be here...");
 }
 
 allocator_buddies_system::allocator_buddies_system(
@@ -56,13 +55,13 @@ bool allocator_buddies_system::do_is_equal(const std::pmr::memory_resource &othe
 inline void allocator_buddies_system::set_fit_mode(
     allocator_with_fit_mode::fit_mode mode)
 {
-    throw not_implemented("inline void allocator_buddies_system::set_fit_mode(allocator_with_fit_mode::fit_mode)", "your code should be here...");
 }
 
 
 std::vector<allocator_test_utils::block_info> allocator_buddies_system::get_blocks_info() const noexcept
 {
-    throw not_implemented("std::vector<allocator_test_utils::block_info> allocator_buddies_system::get_blocks_info() const noexcept", "your code should be here...");
+    // + lock mutex
+    get_blocks_info_inner();
 }
 
 std::vector<allocator_test_utils::block_info> allocator_buddies_system::get_blocks_info_inner() const
@@ -72,55 +71,61 @@ std::vector<allocator_test_utils::block_info> allocator_buddies_system::get_bloc
 
 allocator_buddies_system::buddy_iterator allocator_buddies_system::begin() const noexcept
 {
-    throw not_implemented("allocator_buddies_system::buddy_iterator allocator_buddies_system::begin() const noexcept", "your code should be here...");
+    return buddy_iterator(this->_trusted_memory);
 }
 
 allocator_buddies_system::buddy_iterator allocator_buddies_system::end() const noexcept
 {
-    throw not_implemented("allocator_buddies_system::buddy_iterator allocator_buddies_system::end() const noexcept", "your code should be here...");
+    return buddy_iterator(nullptr);
 }
 
 bool allocator_buddies_system::buddy_iterator::operator==(const allocator_buddies_system::buddy_iterator &other) const noexcept
 {
-    throw not_implemented("bool allocator_buddies_system::buddy_iterator::operator==(const allocator_buddies_system::buddy_iterator &) const noexcept", "your code should be here...");
+    if (this->_block == nullptr && other._block == nullptr) {
+        return true;
+    }
+    return this->_block == other._block;
 }
 
 bool allocator_buddies_system::buddy_iterator::operator!=(const allocator_buddies_system::buddy_iterator &other) const noexcept
 {
-    throw not_implemented("bool allocator_buddies_system::buddy_iterator::operator!=(const allocator_buddies_system::buddy_iterator &) const noexcept", "your code should be here...");
+    return !(*this == other);
 }
 
 allocator_buddies_system::buddy_iterator &allocator_buddies_system::buddy_iterator::operator++() & noexcept
 {
-    throw not_implemented("allocator_buddies_system::buddy_iterator &allocator_buddies_system::buddy_iterator::operator++() & noexcept", "your code should be here...");
+    if (this->_block != nullptr) {
+        auto * metadata = reinterpret_cast<block_metadata*>(this->_block);
+        size_t block_size = 1ULL << metadata->size;
+        this->_block = reinterpret_cast<void*>(reinterpret_cast<std::byte*>(this->_block) + block_size);
+    }
+    return *this;
 }
 
 allocator_buddies_system::buddy_iterator allocator_buddies_system::buddy_iterator::operator++(int n)
 {
-    throw not_implemented("allocator_buddies_system::buddy_iterator allocator_buddies_system::buddy_iterator::operator++(int)", "your code should be here...");
+    buddy_iterator tmp(*this);
+    ++(*this);
+    return tmp;
 }
 
 size_t allocator_buddies_system::buddy_iterator::size() const noexcept
 {
-    throw not_implemented("size_t allocator_buddies_system::buddy_iterator::size() const noexcept", "your code should be here...");
+    auto * metadata = reinterpret_cast<block_metadata*>(this->_block);
+    return metadata->size;
 }
 
 bool allocator_buddies_system::buddy_iterator::occupied() const noexcept
 {
-    throw not_implemented("bool allocator_buddies_system::buddy_iterator::occupied() const noexcept", "your code should be here...");
+    auto * metadata = reinterpret_cast<block_metadata*>(this->_block);
+    return metadata->occupied;
 }
 
 void *allocator_buddies_system::buddy_iterator::operator*() const noexcept
 {
-    throw not_implemented("void *allocator_buddies_system::buddy_iterator::operator*() const noexcept", "your code should be here...");
+    return this->_block;
 }
 
-allocator_buddies_system::buddy_iterator::buddy_iterator(void *start)
-{
-    throw not_implemented("allocator_buddies_system::buddy_iterator::buddy_iterator(void *)", "your code should be here...");
-}
+allocator_buddies_system::buddy_iterator::buddy_iterator(void *start) : _block(start) {}
 
-allocator_buddies_system::buddy_iterator::buddy_iterator()
-{
-    throw not_implemented("allocator_buddies_system::buddy_iterator::buddy_iterator()", "your code should be here...");
-}
+allocator_buddies_system::buddy_iterator::buddy_iterator() : _block(nullptr) {}

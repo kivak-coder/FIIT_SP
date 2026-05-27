@@ -198,17 +198,15 @@ std::byte * allocator_boundary_tags::allocate_and_fill_meta(std::byte * ptr_prev
     // back - ptr_prev, forward = ptr_prev.next
     std::byte * new_block = ptr_cur;
     *reinterpret_cast<size_t*>(new_block) = size;
-    if (ptr_prev == nullptr) {
+    if (ptr_prev == nullptr) { // выделяем сразу после мета аллокатора
         void* old_first = get_first_occupied_block(); // старый первый блок (может быть nullptr)
         *reinterpret_cast<void**>(new_block + sizeof(size_t)) = nullptr;                  // back
         *reinterpret_cast<void**>(new_block + sizeof(size_t) + sizeof(void*)) = old_first; // forward – указывает на старый первый
-        *reinterpret_cast<void**>(new_block + sizeof(size_t) + 2*sizeof(void*)) = this->_trusted_memory;
+        *reinterpret_cast<void**>(new_block + sizeof(size_t) + 2 * sizeof(void*)) = this->_trusted_memory;
 
         if (old_first != nullptr) {
-            // обновляем back у старого первого блока
             *reinterpret_cast<void**>(reinterpret_cast<std::byte*>(old_first) + sizeof(size_t)) = new_block;
         }
-        // обновляем указатель на первый занятый в метаданных аллокатора
         *reinterpret_cast<void**>(reinterpret_cast<std::byte*>(_trusted_memory) + allocator_metadata_size - sizeof(void*)) = new_block;
         return new_block;
     }
@@ -237,7 +235,6 @@ void allocator_boundary_tags::do_deallocate_sm(
     // ВАЖНО: проверить, принадлежит ли удаляемый кусок нашей памяти
     void * parent_mem = *reinterpret_cast<void**>(reinterpret_cast<std::byte*>(at) - sizeof(void*));
     if (parent_mem != this->_trusted_memory) {
-        std::cout << parent_mem << " " << this->_trusted_memory << std::endl;
         throw std::exception();
     }
     std::byte * block = reinterpret_cast<std::byte*>(at) - occupied_block_metadata_size;
@@ -253,7 +250,7 @@ void allocator_boundary_tags::do_deallocate_sm(
     } else if (next_occupied != nullptr && prev_occupied == nullptr) { // мы - первый занятый
         *reinterpret_cast<void**>(reinterpret_cast<std::byte*>(_trusted_memory) + allocator_metadata_size - sizeof(void*)) = next_occupied;
         *reinterpret_cast<void**>(next_occupied + sizeof(size_t)) = nullptr;
-    } else {
+    } else { // остальные случаи
         *reinterpret_cast<void**>(prev_occupied + sizeof(size_t) + sizeof(void*)) = next_occupied;
         *reinterpret_cast<void**>(next_occupied + sizeof(size_t)) = prev_occupied;
     }
@@ -289,7 +286,6 @@ std::vector<allocator_test_utils::block_info> allocator_boundary_tags::get_block
 
     std::byte* pool_start = reinterpret_cast<std::byte*>(_trusted_memory) + allocator_metadata_size;
     std::byte* pool_end = reinterpret_cast<std::byte*>(end_of_memory());
-
     std::byte* current = pool_start;
 
     for (auto it = begin(); it != end(); ++it)
@@ -440,7 +436,7 @@ void * allocator_boundary_tags::get_prev_occupied_block(void * block) const {
     return *reinterpret_cast<void**>(ptr + sizeof(size_t));
 }
 
-bool allocator_boundary_tags::next_is_free(void * block) { // нужна проверка не вышли ли мы за пределы памяти!
+bool allocator_boundary_tags::next_is_free(void * block) { // 
     auto * ptr = reinterpret_cast<std::byte*>(block);
     if (get_next_occupied_block(block) == ptr + occupied_block_metadata_size + get_block_size(block)) { // следующий тоже занят
         return false;
